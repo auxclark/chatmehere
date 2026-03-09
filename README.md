@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ChatMeHere 💬
 
 A real-time chat app migrated from PHP/MySQL to React + Node.js + MongoDB.
@@ -138,3 +139,6 @@ Go back to Render → update `CLIENT_URL` = `https://chatmehere.vercel.app`
 | Images stored in server folder | Cloudinary CDN |
 | SQL injection risk | Mongoose ORM (safe by default) |
 | Only runs on XAMPP | Runs anywhere — Render, Railway, etc. |
+=======
+# chatmehere-backend
+>>>>>>> afb1f5b8b4ffe39122f40b1b9816f046636443a1
