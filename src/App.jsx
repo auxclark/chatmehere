@@ -6,31 +6,35 @@ import Login from "./pages/Login";
 import Users from "./pages/Users";
 import Chat from "./pages/Chat";
 
-// Replaces: PHP session checks + header("location: ...") redirects
-// index.php → if(isset($_SESSION)) → redirect to users.php
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
-  // Replaces: if(isset($_SESSION['unique_id'])) { header("location: users.php"); }
   if (user) return <Navigate to="/users" replace />;
   return children;
 };
 
 const AppRoutes = () => (
   <Routes>
-    {/* Replaces: index.php (signup page) */}
+    {/* Signup page */}
     <Route path="/" element={<PublicRoute><Signup /></PublicRoute>} />
 
-    {/* Replaces: login.php */}
+    {/* Login page */}
     <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
 
-    {/* Replaces: users.php — protected, requires session */}
+    {/* Main messenger layout — Users sidebar + Chat panel inline */}
     <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
 
-    {/* Replaces: chat.php?user_id=123 → /chat/123 */}
-    <Route path="/chat/:userId" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+    {/* Fallback: direct URL access to a specific chat */}
+    {/* e.g. someone bookmarks https://chatmehere.vercel.app/chat/abc123 */}
+    <Route path="/chat/:userId" element={
+      <ProtectedRoute>
+        <div style={{ display: 'flex', height: '100vh' }}>
+          <Chat />
+        </div>
+      </ProtectedRoute>
+    } />
 
-    {/* Catch-all redirect */}
+    {/* Catch-all */}
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>
 );
