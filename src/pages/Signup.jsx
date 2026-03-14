@@ -240,12 +240,12 @@ const Signup = () => {
             ))}
             <div className="signup-left-logo">
               <i className="fa-solid fa-comments"></i>
-              <span>CHATMEHERE</span>
+              <span>TREVIO</span>
             </div>
             <div className="signup-left-content">
               <h2 className="signup-left-heading">Create your<br />account</h2>
               <p className="signup-left-sub">
-                Join ChatMeHere and start connecting with people around you. It's free!
+                Join Trevio and start connecting with people around you. It's free!
               </p>
               <div className="signup-left-steps">
                 {[
