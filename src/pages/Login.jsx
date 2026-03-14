@@ -334,7 +334,7 @@ const Login = () => {
             {/* Logo top left */}
             <div className="login-left-logo">
               <i className="fa-solid fa-comments"></i>
-              <span>CHATMEHERE</span>
+              <span>TREVIO</span>
             </div>
 
             {/* Bottom text */}
@@ -343,11 +343,11 @@ const Login = () => {
                 Don't have an<br />account?
               </h2>
               <p className="login-left-sub">
-                Connect with friends and the world around you on ChatMeHere. It's free!
+                Connect with friends and the world around you on Trevio. It's Free!
               </p>
               <div className="login-left-features">
                 {[
-                  { icon: 'fa-solid fa-bolt',          text: 'Real-time messaging' },
+                  { icon: 'fa-solid fa-bolt',          text: 'Where conversation meets!'},
                   { icon: 'fa-solid fa-user-friends',   text: 'Private conversations' },
                   { icon: 'fa-solid fa-shield-halved',  text: 'Secure & encrypted' },
                 ].map((f, i) => (
