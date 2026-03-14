@@ -471,7 +471,7 @@ const Users = () => {
             <div className="sidebar-top-row">
               <div className="sidebar-brand">
                 <div className="sidebar-brand-icon"><i className="fa-solid fa-comments"></i></div>
-                <span className="sidebar-brand-name">ChatMeHere</span>
+                <span className="sidebar-brand-name">TREVIO</span>
               </div>
               <button className="sidebar-logout-btn" onClick={handleLogout} title="Logout">
                 <i className="fa-solid fa-right-from-bracket"></i>
