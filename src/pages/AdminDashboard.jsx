@@ -333,7 +333,7 @@ const AdminDashboard = () => {
               ))}
               <div className="admin-login-logo-row">
                 <i className="fa-solid fa-shield-halved" style={{ fontSize: 22, color: "rgba(255,255,255,0.9)" }}></i>
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#fff", letterSpacing: "0.5px" }}>CHATMEHERE</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#fff", letterSpacing: "0.5px" }}>Trevio</span>
               </div>
               <div style={{ position: "relative", zIndex: 2, color: "#fff" }}>
                 <h2 style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.25, marginBottom: 14, color: "#fff" }}>Admin<br />Control Panel</h2>
@@ -602,7 +602,7 @@ const AdminDashboard = () => {
             </div>
             <div className="admin-sidebar-logo-text">
               <h2>Admin</h2>
-              <p>ChatMeHere</p>
+              <p>Trevio</p>
             </div>
           </div>
           <nav className="admin-nav">
