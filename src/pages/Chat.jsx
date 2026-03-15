@@ -9,21 +9,24 @@ const REACTIONS = ["❤️", "😂", "😮", "😢", "😡", "👍", "👎"];
 const getIceServers = () => [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "stun:stun2.l.google.com:19302" },
-  { urls: "stun:openrelay.metered.ca:80" },
   {
-    urls: "turn:openrelay.metered.ca:80",
-    username: import.meta.env.VITE_TURN_USERNAME || "openrelayproject",
+    urls: import.meta.env.VITE_TURN_URL_1 || "turn:openrelay.metered.ca:80",
+    username:   import.meta.env.VITE_TURN_USERNAME   || "openrelayproject",
     credential: import.meta.env.VITE_TURN_CREDENTIAL || "openrelayproject",
   },
   {
-    urls: "turn:openrelay.metered.ca:443",
-    username: import.meta.env.VITE_TURN_USERNAME || "openrelayproject",
+    urls: import.meta.env.VITE_TURN_URL_2 || "turn:openrelay.metered.ca:443",
+    username:   import.meta.env.VITE_TURN_USERNAME   || "openrelayproject",
     credential: import.meta.env.VITE_TURN_CREDENTIAL || "openrelayproject",
   },
   {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: import.meta.env.VITE_TURN_USERNAME || "openrelayproject",
+    urls: import.meta.env.VITE_TURN_URL_3 || "turn:openrelay.metered.ca:443?transport=tcp",
+    username:   import.meta.env.VITE_TURN_USERNAME   || "openrelayproject",
+    credential: import.meta.env.VITE_TURN_CREDENTIAL || "openrelayproject",
+  },
+  {
+    urls: import.meta.env.VITE_TURN_URL_4 || "turns:openrelay.metered.ca:443?transport=tcp",
+    username:   import.meta.env.VITE_TURN_USERNAME   || "openrelayproject",
     credential: import.meta.env.VITE_TURN_CREDENTIAL || "openrelayproject",
   },
 ];
