@@ -5,6 +5,7 @@ import Signup from "./pages/Signup";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
 import Chat from "./pages/Chat";
+import AdminDashboard from "./pages/AdminDashboard";
 
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -23,6 +24,8 @@ const AppRoutes = () => (
 
     {/* Main messenger layout — Users sidebar + Chat panel inline */}
     <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+
+    <Route path="/admin" element={<AdminDashboard />} />
 
     {/* Fallback: direct URL access to a specific chat */}
     {/* e.g. someone bookmarks https://chatmehere.vercel.app/chat/abc123 */}
