@@ -1,442 +1,733 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import useSocket from "../hooks/useSocket";
 import api from "../services/api";
-import Chat from "./Chat";
+import Users from "./Users";
 
-const Users = () => {
-  const { user, logout, login } = useAuth();
+/* ─────────────────────────────────────────
+   FEED PAGE  — Social dashboard for ChatMeHere
+   ───────────────────────────────────────── */
+
+// ── Helpers ──────────────────────────────
+const getInitials = (u) => {
+  if (!u) return "?";
+  return ((u.firstName?.[0] || "") + (u.lastName?.[0] || "")).toUpperCase() || u.email?.[0]?.toUpperCase() || "?";
+};
+
+const timeAgo = (date) => {
+  const s = Math.floor((Date.now() - new Date(date)) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(date).toLocaleDateString();
+};
+
+// ── Avatar Component ─────────────────────
+const Avatar = ({ user, size = 40, className = "" }) => {
+  const src = user?.profileImage;
+  return (
+    <div
+      className={className}
+      style={{
+        width: size, height: size, borderRadius: "50%",
+        background: "linear-gradient(135deg, #89253E, #3A6186)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: size * 0.38, fontWeight: 700, color: "#fff",
+        flexShrink: 0, overflow: "hidden",
+      }}
+    >
+      {src
+        ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        : getInitials(user)
+      }
+    </div>
+  );
+};
+
+// ── Post Card ────────────────────────────
+const PostCard = ({ post, currentUser, onLike, onComment, onShare, onDelete }) => {
+  const [showComments, setShowComments] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+
+  const isLiked = post.likes?.includes(currentUser?._id || currentUser?.id);
+  const likeCount = post.likes?.length || 0;
+  const commentCount = post.comments?.length || 0;
+  const isOwner = (post.author?._id || post.author?.id) === (currentUser?._id || currentUser?.id);
+
+  const handleComment = async (e) => {
+    e.preventDefault();
+    if (!commentText.trim()) return;
+    setSubmitting(true);
+    await onComment(post._id, commentText);
+    setCommentText("");
+    setSubmitting(false);
+    setShowComments(true);
+  };
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, marginBottom: 16,
+      boxShadow: "0 2px 12px rgba(137,37,62,0.07), 0 1px 3px rgba(0,0,0,0.06)",
+      overflow: "hidden", transition: "box-shadow 0.2s",
+    }}>
+      {/* Header */}
+      <div style={{ padding: "14px 16px 10px", display: "flex", alignItems: "center", gap: 10 }}>
+        <Avatar user={post.author} size={42} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "#1a1a2e" }}>
+            {post.author?.firstName} {post.author?.lastName}
+          </div>
+          <div style={{ fontSize: 12, color: "#999" }}>{timeAgo(post.createdAt)}</div>
+        </div>
+        {isOwner && (
+          <button
+            onClick={() => onDelete(post._id)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "#ccc", fontSize: 18, padding: "4px 8px", borderRadius: 8,
+              transition: "color 0.2s",
+            }}
+            onMouseEnter={e => e.target.style.color = "#89253E"}
+            onMouseLeave={e => e.target.style.color = "#ccc"}
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {/* Text */}
+      {post.text && (
+        <div style={{ padding: "0 16px 12px", fontSize: 14, lineHeight: 1.6, color: "#333" }}>
+          {post.text}
+        </div>
+      )}
+
+      {/* Media */}
+      {post.mediaUrl && post.mediaType === "image" && (
+        <div style={{ width: "100%", maxHeight: 400, overflow: "hidden", background: "#f5f5f5" }}>
+          <img
+            src={post.mediaUrl}
+            alt=""
+            style={{ width: "100%", display: "block", objectFit: "cover", maxHeight: 400 }}
+            onError={e => { e.target.style.display = "none"; }}
+          />
+        </div>
+      )}
+      {post.mediaUrl && post.mediaType === "video" && !videoError && (
+        <div style={{ background: "#000" }}>
+          <video
+            src={post.mediaUrl}
+            controls
+            style={{ width: "100%", display: "block", maxHeight: 400 }}
+            onError={() => setVideoError(true)}
+          />
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{
+        padding: "8px 16px", borderTop: "1px solid #f0f0f0",
+        display: "flex", gap: 4,
+      }}>
+        <ActionBtn
+          icon={isLiked ? "❤️" : "🤍"}
+          label={`${likeCount > 0 ? likeCount : ""} Like`}
+          active={isLiked}
+          onClick={() => onLike(post._id)}
+          activeColor="#89253E"
+        />
+        <ActionBtn
+          icon="💬"
+          label={`${commentCount > 0 ? commentCount : ""} Comment`}
+          onClick={() => setShowComments(v => !v)}
+        />
+        <ActionBtn
+          icon="↗️"
+          label="Share"
+          onClick={() => onShare(post._id)}
+        />
+      </div>
+
+      {/* Comments section */}
+      {showComments && (
+        <div style={{ borderTop: "1px solid #f0f0f0", padding: "12px 16px" }}>
+          {post.comments?.map((c, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <Avatar user={c.author} size={30} />
+              <div>
+                <div style={{
+                  background: "#f7f7f9", borderRadius: 12, padding: "6px 12px",
+                  fontSize: 13,
+                }}>
+                  <span style={{ fontWeight: 600, color: "#1a1a2e", marginRight: 6 }}>
+                    {c.author?.firstName} {c.author?.lastName}
+                  </span>
+                  {c.text}
+                </div>
+                <div style={{ fontSize: 11, color: "#bbb", marginTop: 2, paddingLeft: 4 }}>
+                  {timeAgo(c.createdAt)}
+                </div>
+              </div>
+            </div>
+          ))}
+          <form onSubmit={handleComment} style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Avatar user={currentUser} size={30} />
+            <input
+              value={commentText}
+              onChange={e => setCommentText(e.target.value)}
+              placeholder="Write a comment…"
+              style={{
+                flex: 1, border: "1px solid #e8e8e8", borderRadius: 20,
+                padding: "6px 14px", fontSize: 13, outline: "none",
+                fontFamily: "Poppins, sans-serif",
+                transition: "border-color 0.2s",
+              }}
+              onFocus={e => e.target.style.borderColor = "#89253E"}
+              onBlur={e => e.target.style.borderColor = "#e8e8e8"}
+            />
+            <button
+              type="submit"
+              disabled={submitting || !commentText.trim()}
+              style={{
+                background: "linear-gradient(135deg, #89253E, #3A6186)",
+                border: "none", borderRadius: 20, color: "#fff",
+                padding: "6px 16px", fontSize: 13, cursor: "pointer",
+                fontFamily: "Poppins, sans-serif",
+                opacity: submitting || !commentText.trim() ? 0.5 : 1,
+              }}
+            >
+              {submitting ? "…" : "Post"}
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ActionBtn = ({ icon, label, active, onClick, activeColor = "#3A6186" }) => (
+  <button
+    onClick={onClick}
+    style={{
+      flex: 1, background: "none", border: "none", cursor: "pointer",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      gap: 6, padding: "8px 4px", borderRadius: 8,
+      fontSize: 13, fontFamily: "Poppins, sans-serif",
+      fontWeight: active ? 600 : 400,
+      color: active ? activeColor : "#666",
+      transition: "background 0.15s, color 0.15s",
+    }}
+    onMouseEnter={e => e.currentTarget.style.background = "#f7f0f2"}
+    onMouseLeave={e => e.currentTarget.style.background = "none"}
+  >
+    <span style={{ fontSize: 16 }}>{icon}</span>
+    <span>{label}</span>
+  </button>
+);
+
+// ── Create Post Box ───────────────────────
+const CreatePost = ({ user, onPost }) => {
+  const [text, setText] = useState("");
+  const [media, setMedia] = useState(null);
+  const [mediaType, setMediaType] = useState(null);
+  const [mediaPreview, setMediaPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const fileRef = useRef();
+
+  const handleFile = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const isVid = f.type.startsWith("video/");
+    setMediaType(isVid ? "video" : "image");
+    setMedia(f);
+    const url = URL.createObjectURL(f);
+    setMediaPreview(url);
+  };
+
+  const clearMedia = () => {
+    setMedia(null); setMediaType(null); setMediaPreview(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleSubmit = async () => {
+    if (!text.trim() && !media) return;
+    setLoading(true);
+    const formData = new FormData();
+    if (text.trim()) formData.append("text", text.trim());
+    if (media) { formData.append("media", media); formData.append("mediaType", mediaType); }
+    await onPost(formData);
+    setText(""); clearMedia();
+    setLoading(false);
+  };
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, padding: 16, marginBottom: 16,
+      boxShadow: "0 2px 12px rgba(137,37,62,0.07)",
+    }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <Avatar user={user} size={42} />
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder={`What's on your mind, ${user?.firstName || "there"}?`}
+          rows={text.length > 60 ? 3 : 1}
+          style={{
+            flex: 1, border: "1.5px solid #eee", borderRadius: 22,
+            padding: "10px 16px", fontSize: 14, fontFamily: "Poppins, sans-serif",
+            resize: "none", outline: "none", lineHeight: 1.5,
+            transition: "border-color 0.2s, height 0.2s",
+            background: "#f9f9fb",
+          }}
+          onFocus={e => e.target.style.borderColor = "#89253E"}
+          onBlur={e => e.target.style.borderColor = "#eee"}
+        />
+      </div>
+
+      {mediaPreview && (
+        <div style={{ marginTop: 12, position: "relative", borderRadius: 12, overflow: "hidden", background: "#000" }}>
+          {mediaType === "image"
+            ? <img src={mediaPreview} alt="" style={{ width: "100%", maxHeight: 200, objectFit: "cover", display: "block" }} />
+            : <video src={mediaPreview} style={{ width: "100%", maxHeight: 200, display: "block" }} />
+          }
+          <button
+            onClick={clearMedia}
+            style={{
+              position: "absolute", top: 8, right: 8,
+              background: "rgba(0,0,0,0.6)", border: "none", color: "#fff",
+              borderRadius: "50%", width: 28, height: 28, cursor: "pointer",
+              fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+            }}
+          >×</button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, paddingTop: 12, borderTop: "1px solid #f0f0f0" }}>
+        <input ref={fileRef} type="file" accept="image/*,video/*" onChange={handleFile} style={{ display: "none" }} />
+        <MediaBtn icon="🖼️" label="Photo" onClick={() => { fileRef.current.accept = "image/*"; fileRef.current.click(); }} />
+        <MediaBtn icon="🎬" label="Video" onClick={() => { fileRef.current.accept = "video/*"; fileRef.current.click(); }} />
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={handleSubmit}
+          disabled={loading || (!text.trim() && !media)}
+          style={{
+            background: "linear-gradient(135deg, #89253E 0%, #5a2d5a 50%, #3A6186 100%)",
+            border: "none", borderRadius: 22, color: "#fff",
+            padding: "9px 24px", fontSize: 13, fontWeight: 600,
+            cursor: "pointer", fontFamily: "Poppins, sans-serif",
+            opacity: loading || (!text.trim() && !media) ? 0.5 : 1,
+            transition: "opacity 0.2s, transform 0.15s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.transform = "scale(1.03)"}
+          onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
+        >
+          {loading ? "Posting…" : "Post"}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const MediaBtn = ({ icon, label, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      display: "flex", alignItems: "center", gap: 5,
+      background: "none", border: "none", cursor: "pointer",
+      padding: "6px 12px", borderRadius: 8, fontSize: 13,
+      color: "#666", fontFamily: "Poppins, sans-serif",
+      transition: "background 0.15s",
+    }}
+    onMouseEnter={e => e.currentTarget.style.background = "#f7f0f2"}
+    onMouseLeave={e => e.currentTarget.style.background = "none"}
+  >
+    <span>{icon}</span><span>{label}</span>
+  </button>
+);
+
+// ── Sidebar: People You May Know ─────────
+const PeopleSidebar = ({ users, currentUser, onMessage }) => (
+  <div style={{
+    background: "#fff", borderRadius: 16, padding: 16,
+    boxShadow: "0 2px 12px rgba(137,37,62,0.07)",
+  }}>
+    <div style={{ fontSize: 13, fontWeight: 700, color: "#89253E", marginBottom: 14, letterSpacing: 0.5 }}>
+      PEOPLE ON CHATMEHERE
+    </div>
+    {users.slice(0, 8).map(u => (
+      <div key={u._id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <Avatar user={u} size={36} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a2e", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {u.firstName} {u.lastName}
+          </div>
+        </div>
+        <button
+          onClick={() => onMessage(u)}
+          style={{
+            background: "linear-gradient(135deg, #89253E, #3A6186)",
+            border: "none", borderRadius: 8, color: "#fff",
+            padding: "4px 10px", fontSize: 11, cursor: "pointer",
+            fontFamily: "Poppins, sans-serif", fontWeight: 600,
+          }}
+        >
+          Chat
+        </button>
+      </div>
+    ))}
+  </div>
+);
+
+// ── Main Feed Component ───────────────────
+const Feed = () => {
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const socket = useSocket();
-
+  const [posts, setPosts] = useState([]);
   const [users, setUsers] = useState([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [isSearchActive, setIsSearchActive] = useState(false);
-  const [onlineUsers, setOnlineUsers] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState(null);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [showMessages, setShowMessages] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+  const [notifCount] = useState(0);
+  const menuRef = useRef();
 
-  // Profile modal state
-  const [showProfile, setShowProfile] = useState(false);
-  const [profileImage, setProfileImage] = useState(null);
-  const [profilePreview, setProfilePreview] = useState(null);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileError, setProfileError] = useState("");
-  const [profileSuccess, setProfileSuccess] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [nameLoading, setNameLoading] = useState(false);
-  const [nameError, setNameError] = useState("");
-  const [nameSuccess, setNameSuccess] = useState("");
+  // Close menu on outside click
+  useEffect(() => {
+    const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setShowProfileMenu(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const fetchPosts = useCallback(async () => {
+    try {
+      const { data } = await api.get("/api/posts");
+      setPosts(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("fetchPosts error:", err?.response?.data || err.message);
+      setPosts([]);
+    } finally { setLoading(false); }
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     try {
       const { data } = await api.get("/api/users");
-      // Sort by most recent message — users with latest message come first
-      // The API returns lastMessage; we sort by who we've chatted with most recently
-      setUsers(data);
-    } catch (err) { console.error("Failed to fetch users", err); }
+      setUsers(Array.isArray(data) ? data : []);
+    } catch { setUsers([]); }
   }, []);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { fetchPosts(); fetchUsers(); }, [fetchPosts, fetchUsers]);
 
-  useEffect(() => {
-    if (!socket) return;
-    socket.on("online_users", (ids) => { setOnlineUsers(ids); fetchUsers(); });
+  const handlePost = async (formData) => {
+    try {
+      const { data } = await api.post("/api/posts", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setPosts(prev => [data, ...prev]);
+      setTimeout(fetchPosts, 500);
+    } catch (err) {
+      console.error("Failed to create post:", err?.response?.data || err.message);
+      alert(err?.response?.data?.message || "Failed to create post. Check the browser console for details.");
+    }
+  };
 
-    // When a new message arrives, refresh the user list so the sender bubbles to top
-    socket.on("receive_message", () => {
-      fetchUsers();
+  const handleLike = async (postId) => {
+    try {
+      const { data } = await api.post(`/api/posts/${postId}/like`);
+      setPosts(prev => prev.map(p => p._id === postId ? { ...p, likes: data.likes } : p));
+    } catch { /* optimistic */ }
+  };
+
+  const handleComment = async (postId, text) => {
+    try {
+      const { data } = await api.post(`/api/posts/${postId}/comment`, { text });
+      setPosts(prev => prev.map(p => p._id === postId ? { ...p, comments: data.comments } : p));
+    } catch { fetchPosts(); }
+  };
+
+  const handleShare = (postId) => {
+    const url = `${window.location.origin}/post/${postId}`;
+    navigator.clipboard?.writeText(url).then(() => {
+      setCopiedId(postId);
+      setTimeout(() => setCopiedId(null), 2000);
     });
+  };
 
-    // When we send a message, also refresh so recipient moves to top
-    socket.on("message_sent", () => {
-      fetchUsers();
-    });
-
-    return () => {
-      socket.off("online_users");
-      socket.off("receive_message");
-      socket.off("message_sent");
-    };
-  }, [socket, fetchUsers]);
-
-  useEffect(() => {
-    if (searchTerm.trim() === "") { fetchUsers(); setIsSearchActive(false); return; }
-    setIsSearchActive(true);
-    const delay = setTimeout(async () => {
-      try {
-        const { data } = await api.get(`/api/users/search?q=${searchTerm}`);
-        setUsers(Array.isArray(data) ? data : []);
-      } catch (err) { console.error("Search failed", err); }
-    }, 300);
-    return () => clearTimeout(delay);
-  }, [searchTerm, fetchUsers]);
+  const handleDelete = async (postId) => {
+    try {
+      await api.delete(`/api/posts/${postId}`);
+      setPosts(prev => prev.filter(p => p._id !== postId));
+    } catch { /* ignore */ }
+  };
 
   const handleLogout = async () => { await logout(); navigate("/login"); };
 
-  const handleSelectUser = (u) => {
-    setSelectedUserId(u._id);
-    setSelectedUser(u);
-    setShowSidebar(false);
-    // Refresh users list when opening a chat (clears unread indicator)
-    setTimeout(fetchUsers, 500);
-  };
-
-  const handleBackToList = () => {
-    setSelectedUserId(null);
-    setSelectedUser(null);
-    setShowSidebar(true);
-    fetchUsers(); // refresh to update last message previews
-  };
-
-  const isOnline = (uid) => onlineUsers.includes(uid.toString());
-
-  const handleOpenProfile = () => {
-    setShowProfile(true);
-    setFirstName(user?.firstName || "");
-    setLastName(user?.lastName || "");
-    setProfileImage(null); setProfilePreview(null);
-    setProfileError(""); setProfileSuccess("");
-    setNameError(""); setNameSuccess("");
-  };
-
-  const handleCloseProfile = () => {
-    setShowProfile(false);
-    setProfileImage(null); setProfilePreview(null);
-    setProfileError(""); setProfileSuccess("");
-    setNameError(""); setNameSuccess("");
-  };
-
-  const handleProfileImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const allowed = ["image/jpeg", "image/jpg", "image/png"];
-    if (!allowed.includes(file.type)) { setProfileError("Please upload a jpeg, jpg, or png file."); return; }
-    if (file.size > 5 * 1024 * 1024) { setProfileError("File size must be under 5MB."); return; }
-    setProfileError(""); setProfileImage(file);
-    setProfilePreview(URL.createObjectURL(file));
-  };
-
-  const handleProfileUpload = async () => {
-    if (!profileImage) return;
-    setProfileLoading(true); setProfileError(""); setProfileSuccess("");
-    try {
-      const formData = new FormData();
-      formData.append("image", profileImage);
-      const { data } = await api.put("/api/auth/avatar", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      login({ ...user, avatar: data.avatar });
-      setProfileSuccess("Profile photo updated!"); setProfileImage(null);
-    } catch (err) {
-      setProfileError(err.response?.data?.message || "Upload failed. Please try again.");
-    } finally { setProfileLoading(false); }
-  };
-
-  const handleSaveName = async () => {
-    if (!firstName.trim() || !lastName.trim()) { setNameError("First and last name are required."); return; }
-    if (firstName.trim() === user?.firstName && lastName.trim() === user?.lastName) { setNameError("No changes detected."); return; }
-    setNameLoading(true); setNameError(""); setNameSuccess("");
-    try {
-      const { data } = await api.put("/api/auth/name", { firstName: firstName.trim(), lastName: lastName.trim() });
-      login({ ...user, firstName: data.firstName, lastName: data.lastName });
-      setNameSuccess("Name updated successfully!");
-    } catch (err) {
-      setNameError(err.response?.data?.message || "Failed to update name.");
-    } finally { setNameLoading(false); }
-  };
+  // If showing messages overlay
+  if (showMessages) {
+    return (
+      <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+        {/* Slim top bar when in messages */}
+        <div style={{
+          background: "linear-gradient(135deg, #89253E 0%, #5a2d5a 45%, #3A6186 100%)",
+          padding: "8px 16px", display: "flex", alignItems: "center", gap: 12,
+          boxShadow: "0 2px 12px rgba(137,37,62,0.3)",
+        }}>
+          <button
+            onClick={() => setShowMessages(false)}
+            style={{
+              background: "rgba(255,255,255,0.18)", border: "none", color: "#fff",
+              borderRadius: 10, padding: "6px 14px", cursor: "pointer",
+              fontFamily: "Poppins, sans-serif", fontSize: 13, fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 6,
+            }}
+          >
+            ← Feed
+          </button>
+          <span style={{ color: "#fff", fontWeight: 700, fontSize: 16, fontFamily: "Poppins, sans-serif" }}>
+            💬 Messages
+          </span>
+        </div>
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          <Users embeddedMode={true} />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
-        @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body, #root { height: 100%; width: 100%; overflow: hidden; font-family: 'Poppins', sans-serif; }
+    <div style={{ minHeight: "100vh", background: "#f2f4f7", fontFamily: "Poppins, sans-serif" }}>
 
-        .messenger-page { display: flex; height: 100vh; width: 100vw; background: #f0f4f8; overflow: hidden; font-family: 'Poppins', sans-serif; }
-
-        .messenger-sidebar { width: 320px; min-width: 320px; background: #fff; border-right: 1px solid #e8edf2; display: flex; flex-direction: column; height: 100vh; overflow: hidden; box-shadow: 2px 0 12px rgba(0,0,0,0.04); flex-shrink: 0; }
-        .sidebar-header { padding: 18px 16px 14px; border-bottom: 1px solid #f0f4f8; flex-shrink: 0; }
-        .sidebar-top-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-        .sidebar-brand { display: flex; align-items: center; gap: 10px; }
-        .sidebar-brand-icon { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #89253E, #3A6186); display: flex; align-items: center; justify-content: center; }
-        .sidebar-brand-icon i { font-size: 18px; color: #fff; }
-        .sidebar-brand-name { font-size: 18px; font-weight: 700; color: #1a202c; }
-        .sidebar-logout-btn { width: 38px; height: 38px; border-radius: 10px; border: none; background: #fff5f5; color: #89253E; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, transform 0.15s; flex-shrink: 0; }
-        .sidebar-logout-btn:hover { background: #fed7d7; transform: scale(1.05); }
-
-        .sidebar-current-user { display: flex; align-items: center; gap: 12px; background: linear-gradient(135deg, rgba(137,37,62,0.06), rgba(58,97,134,0.06)); padding: 12px 14px; border-radius: 14px; margin-bottom: 14px; border: 1px solid rgba(137,37,62,0.1); cursor: pointer; transition: background 0.2s; position: relative; }
-        .sidebar-current-user:hover { background: linear-gradient(135deg, rgba(137,37,62,0.1), rgba(58,97,134,0.1)); }
-        .sidebar-current-user:hover .sidebar-me-edit-hint { opacity: 1; }
-        .sidebar-me-edit-hint { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #89253E; font-weight: 600; opacity: 0; transition: opacity 0.2s; display: flex; align-items: center; gap: 4px; }
-        .sidebar-me-edit-hint i { font-size: 10px; }
-        .sidebar-me-avatar-wrap { position: relative; flex-shrink: 0; }
-        .sidebar-me-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #89253E; }
-        .sidebar-me-online-dot { position: absolute; bottom: 1px; right: 1px; width: 12px; height: 12px; border-radius: 50%; background: #48bb78; border: 2px solid #fff; }
-        .sidebar-me-name { font-size: 14px; font-weight: 600; color: #2d3748; }
-        .sidebar-me-status { font-size: 12px; color: #718096; display: flex; align-items: center; gap: 5px; margin-top: 2px; }
-        .sidebar-me-status i { font-size: 8px; color: #48bb78; }
-
-        .sidebar-search-wrap { position: relative; display: flex; align-items: center; }
-        .sidebar-search-icon { position: absolute; left: 12px; color: #a0aec0; font-size: 13px; z-index: 1; }
-        .sidebar-search-input { width: 100%; height: 40px; padding: 0 36px 0 36px; border-radius: 10px; border: 1.5px solid #e2e8f0; font-size: 13px; outline: none; background: #f8fafc; color: #2d3748; font-family: 'Poppins', sans-serif; transition: border-color 0.2s; }
-        .sidebar-search-input:focus { border-color: #89253E; }
-        .sidebar-search-clear { position: absolute; right: 12px; color: #a0aec0; font-size: 12px; cursor: pointer; }
-
-        .sidebar-users-list { flex: 1; overflow-y: auto; padding: 6px 8px; }
-        .sidebar-list-label { font-size: 11px; font-weight: 600; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.8px; padding: 10px 10px 6px; display: flex; align-items: center; gap: 6px; }
-        .sidebar-empty { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
-        .sidebar-empty i { font-size: 32px; color: #e2e8f0; margin-bottom: 12px; }
-        .sidebar-empty p { font-size: 14px; color: #a0aec0; text-align: center; }
-
-        .sidebar-user-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; cursor: pointer; transition: background 0.15s; margin-bottom: 2px; border-left: 3px solid transparent; }
-        .sidebar-user-item:hover { background: #f7fafc; }
-        .sidebar-user-item.active { background: linear-gradient(135deg, rgba(137,37,62,0.07), rgba(58,97,134,0.07)); border-left-color: #89253E; }
-        .sidebar-user-avatar-wrap { position: relative; flex-shrink: 0; }
-        .sidebar-user-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
-        .sidebar-user-status-dot { position: absolute; bottom: 1px; right: 1px; width: 13px; height: 13px; border-radius: 50%; border: 2px solid #fff; }
-        .sidebar-user-info { flex: 1; min-width: 0; }
-        .sidebar-user-info-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
-        .sidebar-user-name { font-size: 14px; font-weight: 600; color: #2d3748; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sidebar-online-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; margin-left: 6px; }
-        .sidebar-online-badge.online { background: #f0fff4; color: #276749; }
-        .sidebar-online-badge.offline { background: #f7fafc; color: #a0aec0; }
-        .sidebar-last-msg { font-size: 12px; color: #a0aec0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; }
-        .sidebar-last-msg i { font-size: 10px; color: #89253E; flex-shrink: 0; }
-
-        .sidebar-users-list::-webkit-scrollbar { width: 4px; }
-        .sidebar-users-list::-webkit-scrollbar-track { background: transparent; }
-        .sidebar-users-list::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
-
-        .messenger-chat-area { flex: 1; display: flex; flex-direction: column; height: 100vh; overflow: hidden; min-width: 0; }
-        .chat-empty-state { flex: 1; display: flex; align-items: center; justify-content: center; background: #f8fafc; }
-        .chat-empty-inner { text-align: center; padding: 20px; }
-        .chat-empty-icon-wrap { width: 96px; height: 96px; border-radius: 50%; background: linear-gradient(135deg, rgba(137,37,62,0.08), rgba(58,97,134,0.08)); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; }
-        .chat-empty-icon-wrap i { font-size: 44px; background: linear-gradient(135deg, #89253E, #3A6186); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .chat-empty-title { font-size: 26px; font-weight: 700; color: #2d3748; margin-bottom: 10px; }
-        .chat-empty-text { font-size: 15px; color: #718096; margin-bottom: 32px; }
-        .chat-empty-hints { display: flex; flex-direction: column; gap: 10px; align-items: center; }
-        .chat-empty-hint { display: flex; align-items: center; gap: 10px; background: #fff; padding: 11px 22px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-        .chat-empty-hint i { font-size: 14px; background: linear-gradient(135deg, #89253E, #3A6186); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .chat-empty-hint span { font-size: 13px; color: #4a5568; font-weight: 500; }
-
-        /* ── PROFILE MODAL ── */
-        .profile-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 20px; animation: profileFadeIn 0.2s ease forwards; }
-        .profile-modal { background: #fff; border-radius: 24px; width: 100%; max-width: 460px; box-shadow: 0 24px 80px rgba(0,0,0,0.25); animation: profileSlideUp 0.3s ease forwards; overflow: hidden; max-height: 90vh; overflow-y: auto; }
-        .profile-modal::-webkit-scrollbar { width: 4px; }
-        .profile-modal::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
-        .profile-modal-header { background: linear-gradient(135deg, #89253E, #3A6186); padding: 28px 28px 64px; position: relative; text-align: center; }
-        .profile-modal-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border-radius: 50%; border: none; background: rgba(255,255,255,0.2); color: #fff; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
-        .profile-modal-close:hover { background: rgba(255,255,255,0.3); }
-        .profile-modal-title { font-size: 20px; font-weight: 700; color: #fff; }
-        .profile-modal-subtitle { font-size: 13px; color: rgba(255,255,255,0.8); margin-top: 4px; }
-        .profile-avatar-section { display: flex; flex-direction: column; align-items: center; margin-top: -52px; padding: 0 28px 20px; position: relative; }
-        .profile-avatar-wrap { position: relative; margin-bottom: 14px; }
-        .profile-avatar { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 4px solid #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-        .profile-avatar-edit-btn { position: absolute; bottom: 2px; right: 2px; width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #89253E, #3A6186); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s; }
-        .profile-avatar-edit-btn:hover { transform: scale(1.1); }
-        .profile-avatar-edit-btn i { font-size: 12px; color: #fff; }
-        .profile-avatar-edit-input { display: none; }
-        .profile-user-name { font-size: 18px; font-weight: 700; color: #1a202c; }
-        .profile-user-email { font-size: 13px; color: #718096; margin-top: 3px; }
-        .profile-section { padding: 0 28px 20px; }
-        .profile-section-label { font-size: 11px; font-weight: 700; color: #a0aec0; text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 14px; display: flex; align-items: center; gap: 7px; padding-bottom: 8px; border-bottom: 1px solid #f0f4f8; }
-        .profile-section-label i { color: #89253E; font-size: 12px; }
-        .profile-name-row { display: flex; gap: 12px; }
-        .profile-field { display: flex; flex-direction: column; gap: 6px; flex: 1; }
-        .profile-field-label { font-size: 12px; font-weight: 600; color: #4a5568; display: flex; align-items: center; gap: 6px; }
-        .profile-field-label i { color: #89253E; font-size: 11px; }
-        .profile-input { height: 44px; width: 100%; font-size: 14px; padding: 0 14px; border-radius: 10px; border: 2px solid #e2e8f0; outline: none; background: #f8fafc; color: #2d3748; font-family: 'Poppins', sans-serif; transition: border-color 0.2s, background 0.2s; }
-        .profile-input:focus { border-color: #89253E; background: #fff; }
-        .profile-save-name-btn { width: 100%; height: 44px; border-radius: 10px; border: none; background: linear-gradient(135deg, #89253E, #3A6186); color: #fff; font-size: 14px; font-weight: 600; font-family: 'Poppins', sans-serif; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; transition: opacity 0.2s, transform 0.15s; box-shadow: 0 3px 12px rgba(137,37,62,0.25); }
-        .profile-save-name-btn:hover:not(:disabled) { transform: translateY(-1px); }
-        .profile-save-name-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .profile-preview-box { border: 2px dashed #e2e8f0; border-radius: 12px; padding: 18px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
-        .profile-preview-box:hover { border-color: #89253E; background: rgba(137,37,62,0.02); }
-        .profile-preview-box label { cursor: pointer; display: block; }
-        .profile-preview-img { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 3px solid #89253E; margin: 0 auto 10px; display: block; }
-        .profile-preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 5px; }
-        .profile-preview-placeholder i { font-size: 26px; color: #cbd5e0; }
-        .profile-preview-placeholder span { font-size: 13px; color: #a0aec0; }
-        .profile-preview-placeholder small { font-size: 11px; color: #cbd5e0; }
-        .profile-upload-btn { width: 100%; height: 44px; border-radius: 10px; border: none; background: linear-gradient(135deg, #89253E, #3A6186); color: #fff; font-size: 14px; font-weight: 600; font-family: 'Poppins', sans-serif; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; transition: opacity 0.2s, transform 0.15s; box-shadow: 0 3px 12px rgba(137,37,62,0.25); }
-        .profile-upload-btn:hover:not(:disabled) { transform: translateY(-1px); }
-        .profile-upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .profile-msg { margin: 0 28px 14px; padding: 10px 14px; border-radius: 10px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
-        .profile-msg.error { background: #fff5f5; border: 1px solid #fed7d7; color: #c53030; }
-        .profile-msg.success { background: #f0fff4; border: 1px solid #9ae6b4; color: #276749; }
-        .profile-close-row { padding: 0 28px 28px; }
-        .profile-close-btn { width: 100%; height: 44px; border-radius: 10px; border: 2px solid #e2e8f0; background: #fff; color: #718096; font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'Poppins', sans-serif; transition: border-color 0.2s, color 0.2s; }
-        .profile-close-btn:hover { border-color: #89253E; color: #89253E; }
-
-        @keyframes profileFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes profileSlideUp { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
-
-        @media (max-width: 768px) {
-          .messenger-sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; width: 100vw; min-width: unset; transform: translateX(0); transition: transform 0.3s ease; }
-          .messenger-sidebar.hidden { transform: translateX(-100%); }
-          .messenger-chat-area { position: fixed; inset: 0; z-index: 99; }
-          .profile-name-row { flex-direction: column; gap: 12px; }
-        }
-        @media (min-width: 769px) and (max-width: 1100px) { .messenger-sidebar { width: 280px; min-width: 280px; } }
-        @media (min-width: 1101px) { .messenger-sidebar { width: 340px; min-width: 340px; } }
-      `}</style>
-
-      <div className="messenger-page">
-        <div className={`messenger-sidebar ${!showSidebar ? 'hidden' : ''}`}>
-          <div className="sidebar-header">
-            <div className="sidebar-top-row">
-              <div className="sidebar-brand">
-                <div className="sidebar-brand-icon"><i className="fa-solid fa-comments"></i></div>
-                <span className="sidebar-brand-name">Trevio</span>
-              </div>
-              <button className="sidebar-logout-btn" onClick={handleLogout} title="Logout">
-                <i className="fa-solid fa-right-from-bracket"></i>
-              </button>
-            </div>
-            <div className="sidebar-current-user" onClick={handleOpenProfile} title="Edit profile">
-              <div className="sidebar-me-avatar-wrap">
-                <img src={user?.avatar || `https://ui-avatars.com/api/?name=${user?.firstName}+${user?.lastName}&background=89253E&color=fff`} alt={user?.firstName} className="sidebar-me-avatar" />
-                <div className="sidebar-me-online-dot" />
-              </div>
-              <div>
-                <div className="sidebar-me-name">{user?.firstName} {user?.lastName}</div>
-                <div className="sidebar-me-status"><i className="fa-solid fa-circle"></i> Active now</div>
-              </div>
-              <div className="sidebar-me-edit-hint"><i className="fa-solid fa-pen"></i> Edit</div>
-            </div>
-            <div className="sidebar-search-wrap">
-              <i className="fa-solid fa-magnifying-glass sidebar-search-icon"></i>
-              <input type="text" placeholder="Search people..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="sidebar-search-input" />
-              {searchTerm && <i className="fa-solid fa-xmark sidebar-search-clear" onClick={() => setSearchTerm("")} />}
-            </div>
+      {/* ── Top Navigation ── */}
+      <nav style={{
+        position: "sticky", top: 0, zIndex: 100,
+        background: "linear-gradient(135deg, #89253E 0%, #5a2d5a 45%, #3A6186 100%)",
+        boxShadow: "0 2px 16px rgba(137,37,62,0.35)",
+        padding: "0 16px",
+      }}>
+        <div style={{
+          maxWidth: 1100, margin: "0 auto",
+          display: "flex", alignItems: "center", height: 56, gap: 12,
+        }}>
+          {/* Logo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+            <div style={{
+              width: 34, height: 34, background: "rgba(255,255,255,0.2)",
+              borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18,
+            }}>💬</div>
+            <span style={{ color: "#fff", fontWeight: 800, fontSize: 18, letterSpacing: "-0.3px" }}>
+              ChatMe<span style={{ opacity: 0.75 }}>Here</span>
+            </span>
           </div>
 
-          <div className="sidebar-users-list">
-            <p className="sidebar-list-label">
-              <i className="fa-solid fa-users"></i>
-              {isSearchActive ? 'Search Results' : 'All Conversations'}
-            </p>
-            {users.length === 0 ? (
-              <div className="sidebar-empty">
-                <i className="fa-solid fa-user-slash"></i>
-                <p>{isSearchActive ? "No users found" : "No users available"}</p>
-              </div>
-            ) : (
-              users.map((u) => (
-                <div key={u._id} className={`sidebar-user-item ${selectedUserId === u._id ? 'active' : ''}`} onClick={() => handleSelectUser(u)}>
-                  <div className="sidebar-user-avatar-wrap">
-                    <img src={u.avatar || `https://ui-avatars.com/api/?name=${u.firstName}+${u.lastName}&background=3A6186&color=fff`} alt={u.firstName} className="sidebar-user-avatar" />
-                    <div className="sidebar-user-status-dot" style={{ background: isOnline(u._id) ? '#48bb78' : '#cbd5e0' }} />
+          <div style={{ flex: 1 }} />
+
+          {/* Messages Button */}
+          <button
+            onClick={() => setShowMessages(true)}
+            style={{
+              position: "relative",
+              background: "rgba(255,255,255,0.18)", border: "none",
+              borderRadius: 12, color: "#fff", cursor: "pointer",
+              padding: "8px 16px", display: "flex", alignItems: "center", gap: 7,
+              fontFamily: "Poppins, sans-serif", fontSize: 13, fontWeight: 600,
+              transition: "background 0.2s, transform 0.15s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.28)"; e.currentTarget.style.transform = "scale(1.04)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.18)"; e.currentTarget.style.transform = "scale(1)"; }}
+          >
+            <span style={{ fontSize: 17 }}>💬</span>
+            <span style={{ display: "none" }} className="msg-label">Messages</span>
+            {notifCount > 0 && (
+              <span style={{
+                position: "absolute", top: -4, right: -4,
+                background: "#ff4757", color: "#fff", borderRadius: "50%",
+                width: 18, height: 18, fontSize: 10, fontWeight: 700,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>{notifCount}</span>
+            )}
+          </button>
+
+          {/* Profile Menu */}
+          <div ref={menuRef} style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowProfileMenu(v => !v)}
+              style={{
+                background: "none", border: "2px solid rgba(255,255,255,0.5)",
+                borderRadius: "50%", padding: 2, cursor: "pointer",
+                transition: "border-color 0.2s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.9)"}
+              onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.5)"}
+            >
+              <Avatar user={user} size={32} />
+            </button>
+
+            {showProfileMenu && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 8px)", right: 0,
+                background: "#fff", borderRadius: 14, minWidth: 200,
+                boxShadow: "0 8px 30px rgba(0,0,0,0.15)", overflow: "hidden",
+                animation: "fadeSlide 0.15s ease",
+              }}>
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid #f0f0f0" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#1a1a2e" }}>
+                    {user?.firstName} {user?.lastName}
                   </div>
-                  <div className="sidebar-user-info">
-                    <div className="sidebar-user-info-top">
-                      <span className="sidebar-user-name">{u.firstName} {u.lastName}</span>
-                      <span className={`sidebar-online-badge ${isOnline(u._id) ? 'online' : 'offline'}`}>
-                        {isOnline(u._id) ? 'Online' : 'Offline'}
-                      </span>
-                    </div>
-                    <p className="sidebar-last-msg">
-                      {u.lastMessageIsYours && <i className="fa-solid fa-reply"></i>}
-                      {u.lastMessage}
-                    </p>
-                  </div>
+                  <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>{user?.email}</div>
                 </div>
-              ))
+                <button
+                  onClick={handleLogout}
+                  style={{
+                    width: "100%", background: "none", border: "none",
+                    padding: "12px 16px", textAlign: "left", cursor: "pointer",
+                    fontSize: 13, color: "#89253E", fontFamily: "Poppins, sans-serif",
+                    fontWeight: 600, display: "flex", alignItems: "center", gap: 8,
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#fff5f7"}
+                  onMouseLeave={e => e.currentTarget.style.background = "none"}
+                >
+                  🚪 Sign Out
+                </button>
+              </div>
             )}
           </div>
         </div>
+      </nav>
 
-        <div className="messenger-chat-area">
-          {selectedUserId ? (
-            <Chat inlineUserId={selectedUserId} inlineChatUser={selectedUser} onBack={handleBackToList} />
-          ) : (
-            <div className="chat-empty-state">
-              <div className="chat-empty-inner">
-                <div className="chat-empty-icon-wrap"><i className="fa-solid fa-comments"></i></div>
-                <h2 className="chat-empty-title">Your Messages</h2>
-                <p className="chat-empty-text">Select a conversation to start chatting</p>
-                <div className="chat-empty-hints">
-                  {[
-                    { icon: 'fa-solid fa-arrow-pointer', text: 'Click any user to open chat' },
-                    { icon: 'fa-solid fa-paper-plane',   text: 'Send messages instantly' },
-                    { icon: 'fa-solid fa-bolt',          text: 'Real-time delivery' },
-                  ].map((h, i) => (
-                    <div key={i} className="chat-empty-hint">
-                      <i className={h.icon}></i><span>{h.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+      {/* Copy notification */}
+      {copiedId && (
+        <div style={{
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          background: "#1a1a2e", color: "#fff", padding: "10px 20px", borderRadius: 22,
+          fontSize: 13, zIndex: 999, boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+        }}>
+          ✓ Link copied to clipboard
         </div>
+      )}
 
-        {showProfile && (
-          <div className="profile-overlay" onClick={(e) => e.target === e.currentTarget && handleCloseProfile()}>
-            <div className="profile-modal">
-              <div className="profile-modal-header">
-                <button className="profile-modal-close" onClick={handleCloseProfile}><i className="fa-solid fa-xmark"></i></button>
-                <div className="profile-modal-title">Profile Settings</div>
-                <div className="profile-modal-subtitle">Update your name and photo</div>
+      {/* ── Main layout ── */}
+      <div style={{
+        maxWidth: 1100, margin: "0 auto", padding: "20px 16px",
+        display: "grid", gridTemplateColumns: "1fr minmax(0,580px) 260px", gap: 20,
+      }}>
+
+        {/* Left: User info card */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{
+            background: "#fff", borderRadius: 16,
+            boxShadow: "0 2px 12px rgba(137,37,62,0.07)", overflow: "hidden",
+          }}>
+            <div style={{
+              height: 70,
+              background: "linear-gradient(135deg, #89253E 0%, #5a2d5a 50%, #3A6186 100%)",
+            }} />
+            <div style={{ padding: "0 16px 16px" }}>
+              <div style={{ marginTop: -22, marginBottom: 10 }}>
+                <Avatar user={user} size={52} />
               </div>
-              <div className="profile-avatar-section">
-                <div className="profile-avatar-wrap">
-                  <img src={profilePreview || user?.avatar || `https://ui-avatars.com/api/?name=${user?.firstName}+${user?.lastName}&background=89253E&color=fff&size=200`} alt="avatar" className="profile-avatar" />
-                  <label className="profile-avatar-edit-btn" htmlFor="profile-avatar-input" title="Change photo"><i className="fa-solid fa-camera"></i></label>
-                  <input id="profile-avatar-input" type="file" accept="image/jpeg,image/jpg,image/png" className="profile-avatar-edit-input" onChange={handleProfileImageChange} />
-                </div>
-                <div className="profile-user-name">{user?.firstName} {user?.lastName}</div>
-                <div className="profile-user-email">{user?.email}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a2e" }}>
+                {user?.firstName} {user?.lastName}
               </div>
-              <div className="profile-section">
-                <div className="profile-section-label"><i className="fa-solid fa-user-pen"></i> Edit Name</div>
-                <div className="profile-name-row">
-                  <div className="profile-field">
-                    <label className="profile-field-label"><i className="fa-solid fa-user"></i> First Name</label>
-                    <input type="text" value={firstName} onChange={e => { setFirstName(e.target.value); setNameError(""); setNameSuccess(""); }} placeholder="First name" className="profile-input" />
-                  </div>
-                  <div className="profile-field">
-                    <label className="profile-field-label"><i className="fa-solid fa-user"></i> Last Name</label>
-                    <input type="text" value={lastName} onChange={e => { setLastName(e.target.value); setNameError(""); setNameSuccess(""); }} placeholder="Last name" className="profile-input" />
-                  </div>
-                </div>
-                <button className="profile-save-name-btn" onClick={handleSaveName} disabled={nameLoading || !firstName.trim() || !lastName.trim()}>
-                  {nameLoading ? <><i className="fa-solid fa-spinner fa-spin"></i> Saving...</> : <><i className="fa-solid fa-floppy-disk"></i> Save Name</>}
-                </button>
-              </div>
-              {nameError && <div className="profile-msg error"><i className="fa-solid fa-circle-exclamation"></i>{nameError}</div>}
-              {nameSuccess && <div className="profile-msg success"><i className="fa-solid fa-circle-check"></i>{nameSuccess}</div>}
-              <div className="profile-section">
-                <div className="profile-section-label"><i className="fa-solid fa-image"></i> Profile Photo</div>
-                <div className="profile-preview-box">
-                  <label htmlFor="profile-avatar-input">
-                    {profilePreview ? (
-                      <><img src={profilePreview} alt="preview" className="profile-preview-img" /><span style={{ fontSize: 13, color: '#89253E', fontWeight: 600 }}><i className="fa-solid fa-check" style={{ marginRight: 6 }}></i>Photo selected — click Save Photo to upload</span></>
-                    ) : (
-                      <div className="profile-preview-placeholder"><i className="fa-solid fa-cloud-arrow-up"></i><span>Click to choose a photo</span><small>JPEG, JPG, PNG — max 5MB</small></div>
-                    )}
-                  </label>
-                </div>
-                <button className="profile-upload-btn" onClick={handleProfileUpload} disabled={!profileImage || profileLoading}>
-                  {profileLoading ? <><i className="fa-solid fa-spinner fa-spin"></i> Uploading...</> : <><i className="fa-solid fa-cloud-arrow-up"></i> Save Photo</>}
-                </button>
-              </div>
-              {profileError && <div className="profile-msg error"><i className="fa-solid fa-circle-exclamation"></i>{profileError}</div>}
-              {profileSuccess && <div className="profile-msg success"><i className="fa-solid fa-circle-check"></i>{profileSuccess}</div>}
-              <div className="profile-close-row">
-                <button className="profile-close-btn" onClick={handleCloseProfile}><i className="fa-solid fa-xmark" style={{ marginRight: 8 }}></i>Close</button>
+              <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>{user?.email}</div>
+              <div style={{
+                marginTop: 12, padding: "8px 12px", borderRadius: 10,
+                background: "linear-gradient(135deg, rgba(137,37,62,0.07), rgba(58,97,134,0.07))",
+                fontSize: 12, color: "#666",
+              }}>
+                <span style={{ fontWeight: 600, color: "#89253E" }}>{posts.filter(p => (p.author?._id || p.author?.id) === (user?._id || user?.id)).length}</span> posts · <span style={{ fontWeight: 600, color: "#3A6186" }}>{users.length}</span> connections
               </div>
             </div>
           </div>
-        )}
+
+          {/* Quick nav */}
+          <div style={{ background: "#fff", borderRadius: 16, padding: 12, boxShadow: "0 2px 12px rgba(137,37,62,0.07)" }}>
+            {[
+              { icon: "🏠", label: "Home Feed" },
+              { icon: "💬", label: "Messages", action: () => setShowMessages(true) },
+              { icon: "👥", label: "People" },
+            ].map(item => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                style={{
+                  width: "100%", background: "none", border: "none",
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "9px 10px", borderRadius: 10, cursor: "pointer",
+                  fontSize: 13, fontFamily: "Poppins, sans-serif", color: "#333",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "#f7f0f2"}
+                onMouseLeave={e => e.currentTarget.style.background = "none"}
+              >
+                <span style={{ fontSize: 17 }}>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Center: Feed */}
+        <div>
+          <CreatePost user={user} onPost={handlePost} />
+
+          {loading ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#aaa" }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
+              Loading posts…
+            </div>
+          ) : posts.length === 0 ? (
+            <div style={{
+              background: "#fff", borderRadius: 16, padding: "40px 20px",
+              textAlign: "center", boxShadow: "0 2px 12px rgba(137,37,62,0.07)",
+            }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>✨</div>
+              <div style={{ fontWeight: 700, fontSize: 17, color: "#1a1a2e", marginBottom: 6 }}>
+                Be the first to post!
+              </div>
+              <div style={{ fontSize: 13, color: "#999" }}>
+                Share something with the ChatMeHere community
+              </div>
+            </div>
+          ) : (
+            posts.map(post => (
+              <PostCard
+                key={post._id}
+                post={post}
+                currentUser={user}
+                onLike={handleLike}
+                onComment={handleComment}
+                onShare={handleShare}
+                onDelete={handleDelete}
+              />
+            ))
+          )}
+        </div>
+
+        {/* Right: People sidebar */}
+        <div>
+          <PeopleSidebar
+            users={users}
+            currentUser={user}
+            onMessage={(u) => setShowMessages(true)}
+          />
+        </div>
       </div>
-    </>
+
+      <style>{`
+        @keyframes fadeSlide {
+          from { opacity: 0; transform: translateY(-6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 900px) {
+          .feed-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
   );
 };
 
-export default Users;
+export default Feed;
