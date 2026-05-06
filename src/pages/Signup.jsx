@@ -29,7 +29,7 @@ const Signup = () => {
         password: formData.password,
       });
       login(responseData);
-      navigate("/users");
+      navigate("/feed");
     } catch (err) {
       setError(err.response?.data?.message || "Something went wrong. Please try again!");
     } finally {

@@ -23,7 +23,7 @@ const Login = () => {
     try {
       const { data } = await api.post("/api/auth/login", formData);
       login(data);
-      navigate("/users");
+      navigate("/feed");
     } catch (err) {
       setError(err.response?.data?.message || "Something went wrong. Please try again!");
     } finally {
