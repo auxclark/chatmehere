@@ -5,7 +5,7 @@ import api from "../services/api";
 import MessengerPopup from "../components/MessengerPopup";
 import {
   Heart, MessageCircle, Share2, Image, Video, Send,
-  Trash2, LogOut, Home, Users as UsersIcon, MessageSquare,
+  Trash2, LogOut, Home, Users as UsersIcon, User as UserIcon, MessageSquare,
   Loader2, Sparkles, Link, ChevronDown, Globe, Clock, X
 } from "lucide-react";
 
@@ -606,6 +606,20 @@ const Feed = () => {
                   </div>
                   <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{user?.email}</div>
                 </div>
+                <button
+                  onClick={() => { setShowProfileMenu(false); navigate("/profile"); }}
+                  style={{
+                    width: "100%", background: "none", border: "none",
+                    padding: "11px 16px", textAlign: "left", cursor: "pointer",
+                    fontSize: 13, color: "#374151", fontFamily: "Poppins, sans-serif",
+                    fontWeight: 600, display: "flex", alignItems: "center", gap: 9,
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#f3f4f6"}
+                  onMouseLeave={e => e.currentTarget.style.background = "none"}
+                >
+                  <UserIcon size={14} /> My Profile
+                </button>
                 <button
                   onClick={handleLogout}
                   style={{
