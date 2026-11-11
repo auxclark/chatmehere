@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import Users from "./pages/Users";
 import Chat from "./pages/Chat";
 import Feed from "./pages/Feed";
+import Profile from "./pages/Profile";
 import AdminDashboard from "./pages/AdminDashboard";
 
 const PublicRoute = ({ children }) => {
@@ -20,6 +21,7 @@ const AppRoutes = () => (
     <Route path="/" element={<PublicRoute><Signup /></PublicRoute>} />
     <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
     <Route path="/feed" element={<ProtectedRoute><Feed /></ProtectedRoute>} />
+    <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
     <Route path="/admin" element={<AdminDashboard />} />
     <Route path="/chat/:userId" element={

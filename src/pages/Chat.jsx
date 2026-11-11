@@ -1,10 +1,55 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { io } from "socket.io-client";
 import api from "../services/api";
+import "../styles/chat-modern.css";
 
 const REACTIONS = ["❤️", "😂", "😮", "😢", "😡", "👍", "👎"];
+
+const parseDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const sameDay = (a, b) => {
+  const first = parseDate(a);
+  const second = parseDate(b);
+  if (!first || !second) return false;
+  return first.toDateString() === second.toDateString();
+};
+
+const formatMessageTime = (value) => {
+  const date = parseDate(value);
+  if (!date) return "";
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
+
+const formatDayLabel = (value) => {
+  const date = parseDate(value);
+  if (!date) return "";
+
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return "Today";
+
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+
+  if (today - date < 7 * 24 * 60 * 60 * 1000) {
+    return date.toLocaleDateString("en-US", { weekday: "long" });
+  }
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+};
 
 const getIceServers = () => [
   { urls: "stun:stun.l.google.com:19302" },
@@ -38,7 +83,7 @@ const CALL_STATE = {
   ACTIVE:   "active",
 };
 
-const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
+const Chat = ({ inlineUserId, inlineChatUser, onBack, popupMode = false, onClose }) => {
   const params   = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -66,6 +111,15 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
   // Paste
   const [pastePreview, setPastePreview] = useState(null);
   const [pasteFile,    setPasteFile]    = useState(null);
+
+  // Mobile long-press actions
+  const [longPressMessage, setLongPressMessage] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [longPressPos, setLongPressPos] = useState({ x: 0, y: 0 });
+  const longPressTimer = useRef(null);
+  const longPressMoved = useRef(false);
+  const longPressJustOpened = useRef(false);
+  const chatPanelRef = useRef(null);
 
   // ── CALL STATE ────────────────────────────────────────────────────────
   const [callState,       setCallState]       = useState(CALL_STATE.IDLE);
@@ -142,6 +196,12 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
       }
     });
     s.on("reaction_updated", (updatedMsg) => {
+      setMessages(prev => prev.map(m => m._id === updatedMsg._id ? updatedMsg : m));
+    });
+    s.on("message_deleted", ({ messageId }) => {
+      setMessages(prev => prev.filter(m => m._id !== messageId));
+    });
+    s.on("message_edited", (updatedMsg) => {
       setMessages(prev => prev.map(m => m._id === updatedMsg._id ? updatedMsg : m));
     });
     s.on("messages_seen", ({ by }) => {
@@ -226,6 +286,23 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
+  }, []);
+
+  useEffect(() => {
+    if (!longPressMessage) return;
+    const handler = (e) => {
+      if (longPressJustOpened.current) return;
+      if (e.target.closest(".chat-action-popover")) return;
+      setLongPressMessage(null);
+    };
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
+  }, [longPressMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    };
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -500,6 +577,26 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
   };
 
   const handleSend = async () => {
+    if (editingMessage) {
+      if (!message.trim()) return;
+      const msgText = message.trim();
+      try {
+        const { data: updatedMsg } = await api.put(`/api/chat/edit/${editingMessage._id}`, {
+          message: msgText,
+        });
+        setMessages(prev => prev.map(m => m._id === updatedMsg._id ? updatedMsg : m));
+        socketRef.current?.emit("message_edited", { roomId, message: updatedMsg });
+        setEditingMessage(null);
+        setMessage("");
+        scrollToBottom();
+      } catch (err) {
+        console.error("edit error", err);
+        alert("Could not edit message. Please try again.");
+        setMessage(msgText);
+      }
+      return;
+    }
+
     if (!message.trim() && !attachFile && !pasteFile) return;
     if (attachFile || pasteFile) { await handleSendFile(attachFile || pasteFile); return; }
     const msgText = message.trim();
@@ -566,9 +663,73 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
     } catch (err) { console.error("react error", err); }
   };
 
+  const startLongPress = (msg, event) => {
+    longPressMoved.current = false;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    const rect = event?.currentTarget?.getBoundingClientRect?.() || null;
+    longPressTimer.current = setTimeout(() => {
+      if (!longPressMoved.current) {
+        longPressJustOpened.current = true;
+        setLongPressPos(
+          rect
+            ? { x: rect.left + rect.width / 2, y: rect.top }
+            : { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+        );
+        setLongPressMessage(msg);
+        setTimeout(() => {
+          longPressJustOpened.current = false;
+        }, 1000);
+      }
+    }, 450);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handleLongPressMove = () => {
+    longPressMoved.current = true;
+    cancelLongPress();
+  };
+
+  const startReplyFromSheet = (msg) => {
+    setEditingMessage(null);
+    setReplyingTo(msg);
+    setLongPressMessage(null);
+    inputRef.current?.focus();
+  };
+
+  const startEditFromSheet = (msg) => {
+    setReplyingTo(null);
+    setEditingMessage(msg);
+    setMessage(msg.message || "");
+    clearAttachment();
+    setLongPressMessage(null);
+    inputRef.current?.focus();
+  };
+
+  const handleDeleteMessage = async (msg) => {
+    setLongPressMessage(null);
+    try {
+      await api.delete(`/api/chat/${msg._id}`);
+      setMessages(prev => prev.filter(m => m._id !== msg._id));
+      socketRef.current?.emit("message_deleted", { roomId, messageId: msg._id });
+    } catch (err) {
+      console.error("delete message error", err);
+      alert("Could not delete message. Please try again.");
+    }
+  };
+
   const handleKeyUp = (e) => {
-    if (e.key === "Enter" && (message.trim() || attachFile || pasteFile)) { handleSend(); return; }
-    if (e.key === "Escape") { setReplyingTo(null); return; }
+    if (e.key === "Enter" && (message.trim() || attachFile || pasteFile || editingMessage)) { handleSend(); return; }
+    if (e.key === "Escape") {
+      setReplyingTo(null);
+      if (editingMessage) { setEditingMessage(null); setMessage(""); }
+      return;
+    }
     socketRef.current?.emit("typing", { roomId, userId: user._id });
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
@@ -635,11 +796,18 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
     if (!Object.keys(obj).length) return null;
     const grouped = {};
     Object.values(obj).forEach(e => { grouped[e] = (grouped[e] || 0) + 1; });
+    const myReaction = obj[user?._id];
     return (
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+      <div className="chat-reaction-row">
         {Object.entries(grouped).map(([emoji, count]) => (
-          <button key={emoji} onClick={() => handleReact(msg._id, emoji)} style={{ display: "flex", alignItems: "center", gap: 3, background: "rgba(255,255,255,0.95)", border: "1px solid #e2e8f0", borderRadius: 20, padding: "2px 8px", fontSize: 13, cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", fontFamily: "inherit" }}>
-            {emoji}{count > 1 && <span style={{ fontSize: 11, color: "#718096" }}>{count}</span>}
+          <button
+            key={emoji}
+            onClick={() => handleReact(msg._id, emoji)}
+            className={`chat-reaction-chip${myReaction === emoji ? " active" : ""}`}
+            title="React"
+          >
+            <span className="chat-reaction-emoji">{emoji}</span>
+            {count > 1 && <span className="chat-reaction-count">{count}</span>}
           </button>
         ))}
       </div>
@@ -965,7 +1133,7 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
       )}
 
       {/* ══ CHAT PANEL ══ */}
-      <div className="chat-panel">
+      <div ref={chatPanelRef} className={`chat-panel${popupMode ? " popup-mode" : ""}`}>
 
         {/* Header */}
         <div className="chat-header">
@@ -996,9 +1164,15 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
             <button className="chat-action-btn video-btn" title="Video call" onClick={() => startCall("video")}>
               <i className="fa-solid fa-video"></i>
             </button>
-            <button className="chat-action-btn" title="More options">
-              <i className="fa-solid fa-ellipsis-vertical"></i>
-            </button>
+            {popupMode ? (
+              <button className="chat-action-btn chat-close-btn" title="Close chat" onClick={onClose}>
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            ) : (
+              <button className="chat-action-btn" title="More options">
+                <i className="fa-solid fa-ellipsis-vertical"></i>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1038,59 +1212,92 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
                 const isOutgoing   = msg.senderId?._id === user?._id || msg.senderId === user?._id;
                 const prevSender   = messages[idx - 1]?.senderId?._id || messages[idx - 1]?.senderId;
                 const currSender   = msg.senderId?._id || msg.senderId;
-                const showAvatar   = !isOutgoing && prevSender !== currSender;
+                const nextMsg      = messages[idx + 1];
+                const nextSender   = nextMsg?.senderId?._id || nextMsg?.senderId;
+                const dayChanged   = !sameDay(messages[idx - 1]?.createdAt, msg.createdAt);
+                const showDay      = idx === 0 || dayChanged;
+                const showAvatar   = !isOutgoing && (prevSender !== currSender || dayChanged);
                 const isLastOut    = isOutgoing && msg._id === lastOutgoingMsg?._id;
+                const isLastIncoming = !isOutgoing && (!nextMsg || nextSender !== currSender || !sameDay(msg.createdAt, nextMsg.createdAt));
                 const repliedMsg   = msg.replyTo;
                 const repliedSender= repliedMsg?.senderId;
                 const repliedIsMe  = repliedSender?._id === user?._id || repliedSender === user?._id;
 
                 return (
-                  <div key={msg._id} style={{ marginBottom: 2 }} ref={el => { if (el) replyRefs.current[msg._id] = el; }} className="chat-msg-highlight">
-                    <div className={`chat-msg-row ${isOutgoing ? "outgoing" : "incoming"}`}>
-                      {!isOutgoing && (showAvatar
-                        ? <img src={getAvatar(chatUser, 32)} alt="" className="chat-msg-avatar" />
-                        : <div className="chat-msg-avatar-space" />
-                      )}
-
-                      <div className={`chat-bubble-wrap ${isOutgoing ? "outgoing" : "incoming"}`}>
-                        <div className="chat-msg-actions" onClick={e => e.stopPropagation()}>
-                          <button className="chat-msg-action-btn" onClick={() => { setReplyingTo(msg); inputRef.current?.focus(); }}>
-                            <i className="fa-solid fa-reply"></i>
-                          </button>
-                          <button className="chat-msg-action-btn" onClick={e => {
-                            const r = e.currentTarget.getBoundingClientRect();
-                            setReactionMenuPos({ x: Math.min(Math.max(r.left - 50, 10), window.innerWidth - 310), y: Math.max(r.top - 60, 10) });
-                            setReactionMenuMsgId(msg._id);
-                          }}>😊</button>
-                        </div>
-
-                        <div className={`chat-bubble ${isOutgoing ? "outgoing" : "incoming"}`}>
-                          {repliedMsg && (
-                            <div className={`reply-preview-bubble ${isOutgoing ? "outgoing" : "incoming"}`} onClick={() => scrollToMessage(repliedMsg._id)}>
-                              {repliedMsg.fileType === "image" && repliedMsg.fileUrl && <img src={repliedMsg.fileUrl} alt="" className="reply-preview-img" />}
-                              <div className="reply-preview-name">
-                                <i className="fa-solid fa-reply" style={{ fontSize: 10 }}></i>
-                                {repliedIsMe ? "You" : repliedSender?.firstName || ""}
-                              </div>
-                              <div className="reply-preview-text">{getReplyPreview(repliedMsg)}</div>
-                            </div>
-                          )}
-                          {renderMsgContent(msg, isOutgoing)}
-                        </div>
-
-                        {renderReactions(msg)}
-                      </div>
-                    </div>
-
-                    {isLastOut && (
-                      <div className={`chat-msg-status ${lastOutgoingStatus === "seen" ? "seen" : ""}`}>
-                        {lastOutgoingStatus === "seen"
-                          ? <><span className="status-seen-icon"><i className="fa-solid fa-check"></i><i className="fa-solid fa-check"></i></span><span>Seen</span></>
-                          : <><i className="fa-solid fa-check"></i><span>Delivered</span></>
-                        }
+                  <Fragment key={msg._id}>
+                    {showDay && (
+                      <div className="chat-day-divider">
+                        <span>{formatDayLabel(msg.createdAt)}</span>
                       </div>
                     )}
-                  </div>
+
+                    <div
+                      ref={el => { if (el) replyRefs.current[msg._id] = el; }}
+                      className="chat-msg-highlight"
+                      onTouchStart={(e) => startLongPress(msg, e)}
+                      onTouchMove={handleLongPressMove}
+                      onTouchEnd={cancelLongPress}
+                      onTouchCancel={cancelLongPress}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setLongPressMessage(msg);
+                      }}
+                    >
+                      <div className={`chat-msg-row ${isOutgoing ? "outgoing" : "incoming"}`}>
+                        {!isOutgoing && (showAvatar
+                          ? <img src={getAvatar(chatUser, 32)} alt="" className="chat-msg-avatar" />
+                          : <div className="chat-msg-avatar-space" />
+                        )}
+
+                        <div className={`chat-bubble-wrap ${isOutgoing ? "outgoing" : "incoming"}`}>
+                          <div className="chat-msg-actions" onClick={e => e.stopPropagation()}>
+                            <button className="chat-msg-action-btn" onClick={() => { setReplyingTo(msg); inputRef.current?.focus(); }} title="Reply">
+                              <i className="fa-solid fa-reply"></i>
+                            </button>
+                            <button className="chat-msg-action-btn" title="React" onClick={e => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setReactionMenuPos({ x: Math.min(Math.max(r.left - 50, 10), window.innerWidth - 310), y: Math.max(r.top - 60, 10) });
+                              setReactionMenuMsgId(msg._id);
+                            }}>😊</button>
+                          </div>
+
+                          <div className={`chat-bubble ${isOutgoing ? "outgoing" : "incoming"}`}>
+                            {repliedMsg && (
+                              <div className={`reply-preview-bubble ${isOutgoing ? "outgoing" : "incoming"}`} onClick={() => scrollToMessage(repliedMsg._id)}>
+                                {repliedMsg.fileType === "image" && repliedMsg.fileUrl && <img src={repliedMsg.fileUrl} alt="" className="reply-preview-img" />}
+                                <div className="reply-preview-name">
+                                  <i className="fa-solid fa-reply" style={{ fontSize: 10 }}></i>
+                                  {repliedIsMe ? "You" : repliedSender?.firstName || ""}
+                                </div>
+                                <div className="reply-preview-text">{getReplyPreview(repliedMsg)}</div>
+                              </div>
+                            )}
+                            {renderMsgContent(msg, isOutgoing)}
+                          </div>
+
+                          {renderReactions(msg)}
+                        </div>
+                      </div>
+
+                      {isLastOut && (
+                        <div className="chat-msg-meta outgoing">
+                          <span className="chat-msg-time">{formatMessageTime(msg.createdAt)}</span>
+                          <span className={`chat-msg-status ${lastOutgoingStatus === "seen" ? "seen" : ""}`}>
+                            {lastOutgoingStatus === "seen"
+                              ? <><span className="status-seen-icon"><i className="fa-solid fa-check"></i><i className="fa-solid fa-check"></i></span><span>Seen</span></>
+                              : <><i className="fa-solid fa-check"></i><span>Delivered</span></>
+                            }
+                          </span>
+                        </div>
+                      )}
+
+                      {isLastIncoming && (
+                        <div className="chat-msg-meta incoming">
+                          <span className="chat-msg-time">{formatMessageTime(msg.createdAt)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </Fragment>
                 );
               })}
 
@@ -1109,6 +1316,22 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
             </>
           )}
         </div>
+
+        {/* Edit bar */}
+        {editingMessage && (
+          <div className="reply-bar">
+            <div className="reply-bar-indicator" />
+            <div className="reply-bar-content">
+              <div className="reply-bar-name">
+                <i className="fa-solid fa-pen"></i> Editing message
+              </div>
+              <div className="reply-bar-text">{editingMessage.message || getReplyPreview(editingMessage)}</div>
+            </div>
+            <button className="reply-bar-close" onClick={() => { setEditingMessage(null); setMessage(""); }}>
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+        )}
 
         {/* Reply bar */}
         {replyingTo && (
@@ -1151,6 +1374,59 @@ const Chat = ({ inlineUserId, inlineChatUser, onBack }) => {
         </div>
 
       </div>
+
+      {/* Long-press action popover */}
+      {longPressMessage && (() => {
+        const panel = chatPanelRef.current?.getBoundingClientRect();
+        const x = Math.min(
+          Math.max(longPressPos.x, (panel?.left ?? 8) + 10),
+          (panel?.right ?? window.innerWidth) - 228
+        );
+        const y = Math.min(
+          Math.max(longPressPos.y, (panel?.top ?? 8) + 10),
+          (panel?.bottom ?? window.innerHeight) - 280
+        );
+        return (
+          <div
+            className="chat-action-popover"
+            style={{ left: x, top: y }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="chat-action-popover-reactions">
+              {REACTIONS.map(emoji => (
+                <button
+                  key={emoji}
+                  className="chat-action-popover-reaction"
+                  onClick={() => { handleReact(longPressMessage._id, emoji); setLongPressMessage(null); }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <div className="chat-action-popover-actions">
+              <button className="chat-action-popover-btn" onClick={() => startReplyFromSheet(longPressMessage)}>
+                <i className="fa-solid fa-reply"></i>
+                <span>Reply</span>
+              </button>
+              {(longPressMessage.senderId?._id === user?._id || longPressMessage.senderId === user?._id) && (
+                <>
+                  <button className="chat-action-popover-btn" onClick={() => startEditFromSheet(longPressMessage)}>
+                    <i className="fa-solid fa-pen"></i>
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    className="chat-action-popover-btn danger"
+                    onClick={() => handleDeleteMessage(longPressMessage)}
+                  >
+                    <i className="fa-solid fa-trash"></i>
+                    <span>Delete</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 };

@@ -3,40 +3,86 @@ import { useAuth } from "../context/AuthContext";
 import useSocket from "../hooks/useSocket";
 import api from "../services/api";
 import Chat from "../pages/Chat";
-import {
-  X, Search, MessageSquare, ChevronLeft, Minus
-} from "lucide-react";
+import { X, Search, MessageSquare, Minus, Maximize2 } from "lucide-react";
+import "../styles/messenger.css";
 
-
+const BRAND_GRADIENT =
+  "linear-gradient(135deg, #89253E 0%, #5a2d5a 50%, #3A6186 100%)";
 
 const getInitials = (u) => {
   if (!u) return "?";
   return ((u.firstName?.[0] || "") + (u.lastName?.[0] || "")).toUpperCase() || "?";
 };
 
-const Avatar = ({ user, size = 36, showOnline = false, isOnline = false }) => {
+const formatListTime = (date) => {
+  if (!date) return "";
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
+
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    const mins = Math.floor((now - d) / 60000);
+    if (mins < 1) return "now";
+    if (mins < 60) return `${mins}m`;
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+
+  if (now - d < 7 * 24 * 60 * 60 * 1000) {
+    return d.toLocaleDateString("en-US", { weekday: "short" });
+  }
+
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+const Avatar = ({ user, size = 40, showOnline = false, isOnline = false }) => {
   const src = user?.avatar || user?.profileImage;
+  const [failedSrc, setFailedSrc] = useState(null);
+
+  const dotSize = Math.max(9, Math.round(size * 0.26));
+
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
-      <div style={{
-        width: size, height: size, borderRadius: "50%",
-        background: "linear-gradient(135deg, #89253E, #3A6186)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: size * 0.36, fontWeight: 700, color: "#fff",
-        overflow: "hidden", flexShrink: 0,
-      }}>
-        {src
-          ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} />
-          : getInitials(user)
-        }
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          background: BRAND_GRADIENT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: size * 0.36,
+          fontWeight: 700,
+          color: "#fff",
+          overflow: "hidden",
+          flexShrink: 0,
+          letterSpacing: "-0.3px",
+        }}
+      >
+        {src && failedSrc !== src ? (
+          <img
+            src={src}
+            alt=""
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onError={() => setFailedSrc(src)}
+          />
+        ) : (
+          getInitials(user)
+        )}
       </div>
       {showOnline && (
-        <div style={{
-          position: "absolute", bottom: 1, right: 1,
-          width: size * 0.28, height: size * 0.28, borderRadius: "50%",
-          background: isOnline ? "#22c55e" : "#d1d5db",
-          border: "2px solid #fff",
-        }} />
+        <span
+          className={`mp-presence${isOnline ? " online" : ""}`}
+          style={{
+            width: dotSize,
+            height: dotSize,
+            borderWidth: Math.max(2, Math.round(size * 0.055)),
+          }}
+        />
       )}
     </div>
   );
@@ -56,286 +102,282 @@ const MessengerPopup = ({ onClose }) => {
     try {
       const { data } = await api.get("/api/users");
       setUsers(Array.isArray(data) ? data : []);
-    } catch { setUsers([]); }
+    } catch {
+      setUsers([]);
+    }
   }, []);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  const handleBackToInbox = useCallback(() => {
+    setSelectedUser(null);
+    fetchUsers();
+  }, [fetchUsers]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api
+      .get("/api/users")
+      .then(({ data }) => {
+        if (!cancelled) setUsers(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setUsers([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!socket) return;
-    socket.on("online_users", (ids) => setOnlineUsers(ids));
+    socket.on("online_users", (ids) => setOnlineUsers(Array.isArray(ids) ? ids : []));
     socket.on("receive_message", fetchUsers);
-    return () => { socket.off("online_users"); socket.off("receive_message"); };
+    return () => {
+      socket.off("online_users");
+      socket.off("receive_message");
+    };
   }, [socket, fetchUsers]);
 
-  const filtered = users.filter(u =>
-    `${u.firstName} ${u.lastName}`.toLowerCase().includes(search.toLowerCase())
+  const myId = user?._id || user?.id;
+  const query = search.trim().toLowerCase();
+  const filtered = query
+    ? users.filter((u) =>
+        `${u.firstName || ""} ${u.lastName || ""}`.toLowerCase().includes(query)
+      )
+    : users;
+  const onlineContacts = users.filter(
+    (u) => u._id !== myId && onlineUsers.includes(u._id)
   );
-
-  const popupW = selectedUser ? 680 : 320;
-  const popupH = minimized ? 52 : 520;
+  const selectedOnline = selectedUser ? onlineUsers.includes(selectedUser._id) : false;
+  const popupW = minimized ? 340 : selectedUser ? 780 : 340;
+  const popupH = minimized ? 56 : 580;
+  const title = selectedUser
+    ? `${selectedUser.firstName} ${selectedUser.lastName}`
+    : "Messages";
 
   return (
     <>
-      <style>{`
-        .mp-popup { font-family: 'Poppins', sans-serif; }
-        .mp-user-row:hover { background: rgba(137,37,62,0.06) !important; }
-        .mp-user-row.active-row { background: rgba(137,37,62,0.09) !important; }
-        .mp-close-btn:hover { background: rgba(255,255,255,0.25) !important; }
-        .mp-min-btn:hover { background: rgba(255,255,255,0.25) !important; }
-        /* Mobile: fullscreen popup */
-        @media (max-width: 640px) {
-          .mp-outer {
-            width: 100vw !important;
-            height: 100vh !important;
-            bottom: 0 !important;
-            right: 0 !important;
-            border-radius: 0 !important;
-            max-width: 100vw !important;
-          }
-          .mp-user-list-panel {
-            width: 100% !important;
-            min-width: 100% !important;
-          }
-          .mp-user-list-panel.has-chat {
-            display: none !important;
-          }
-          .mp-chat-panel {
-            position: absolute !important;
-            inset: 52px 0 0 0 !important;
-            width: 100% !important;
-          }
-        }
-        /* Tablet: wider popup */
-        @media (min-width: 641px) and (max-width: 960px) {
-          .mp-outer {
-            width: min(680px, calc(100vw - 24px)) !important;
-            right: 12px !important;
-          }
-        }
-      `}</style>
-
-      {/* Backdrop on mobile */}
       <div
-        onClick={onClose}
-        style={{
-          position: "fixed", inset: 0, zIndex: 998,
-          background: "rgba(0,0,0,0.3)",
-          display: "none",
-        }}
-        className="mp-backdrop"
-      />
-
-      <div
-        className="mp-popup mp-outer"
+        className={`mp-popup mp-outer${minimized ? " mp-minimized" : ""}`}
         style={{
           position: "fixed",
-          bottom: 20, right: 20,
+          bottom: 20,
+          right: 20,
           width: popupW,
           height: popupH,
           background: "#fff",
-          borderRadius: 16,
-          boxShadow: "0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(137,37,62,0.12)",
+          borderRadius: 18,
           zIndex: 999,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
           transition: "width 0.25s ease, height 0.25s ease",
         }}
+        role="dialog"
+        aria-label="Messages"
       >
-        {/* ── Header ── */}
-        <div style={{
-          background: "linear-gradient(135deg, #89253E 0%, #5a2d5a 50%, #3A6186 100%)",
-          padding: "0 14px",
-          height: 52, minHeight: 52,
-          display: "flex", alignItems: "center", gap: 10,
-          flexShrink: 0,
-        }}>
-          {selectedUser && !minimized && (
-            <button
-              onClick={() => setSelectedUser(null)}
-              className="mp-min-btn"
-              style={{
-                background: "rgba(255,255,255,0.15)", border: "none",
-                borderRadius: 8, color: "#fff", cursor: "pointer",
-                width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
-                flexShrink: 0, transition: "background 0.15s",
-              }}
-            >
-              <ChevronLeft size={16} />
-            </button>
-          )}
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-            {selectedUser
-              ? <Avatar user={selectedUser} size={30} showOnline isOnline={onlineUsers.includes(selectedUser._id)} />
-              : <MessageSquare size={18} color="#fff" />
-            }
-            <span style={{
-              color: "#fff", fontWeight: 700, fontSize: 14,
-              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            }}>
-              {selectedUser ? `${selectedUser.firstName} ${selectedUser.lastName}` : "Messages"}
-            </span>
-            {selectedUser && onlineUsers.includes(selectedUser._id) && (
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", marginLeft: 2 }}>· Active now</span>
+        {minimized && (
+          <div className="mp-min-bar">
+            {selectedUser ? (
+              <Avatar user={selectedUser} size={34} showOnline isOnline={selectedOnline} />
+            ) : (
+              <div className="mp-min-icon">
+                <MessageSquare size={16} />
+              </div>
             )}
+            <span className="mp-min-title">{title}</span>
+            {selectedOnline && <span className="mp-min-status" />}
+            <div className="mp-head-actions">
+              <button
+                className="mp-head-btn"
+                onClick={() => setMinimized(false)}
+                title="Expand"
+                aria-label="Expand messages"
+              >
+                <Maximize2 size={14} />
+              </button>
+              <button
+                className="mp-head-btn"
+                onClick={onClose}
+                title="Close"
+                aria-label="Close messages"
+              >
+                <X size={14} />
+              </button>
+            </div>
           </div>
+        )}
 
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            <button
-              onClick={() => setMinimized(v => !v)}
-              className="mp-min-btn"
-              style={{
-                background: "rgba(255,255,255,0.15)", border: "none",
-                borderRadius: 8, color: "#fff", cursor: "pointer",
-                width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "background 0.15s",
-              }}
-              title={minimized ? "Expand" : "Minimize"}
-            >
-              <Minus size={14} />
-            </button>
-            <button
-              onClick={onClose}
-              className="mp-close-btn"
-              style={{
-                background: "rgba(255,255,255,0.15)", border: "none",
-                borderRadius: 8, color: "#fff", cursor: "pointer",
-                width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "background 0.15s",
-              }}
-              title="Close"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-
-        {/* ── Body ── */}
-        {!minimized && (
-          <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-
-            {/* User list panel */}
-            <div className={`mp-user-list-panel${selectedUser ? " has-chat" : ""}`} style={{
-              width: selectedUser ? 320 : "100%", minWidth: selectedUser ? 320 : "100%", flexShrink: 0,
-              display: "flex", flexDirection: "column",
-              borderRight: selectedUser ? "1px solid #f3f4f6" : "none",
-              overflow: "hidden",
-            }}>
-              {/* Search */}
-              <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid #f3f4f6" }}>
-                <div style={{ position: "relative" }}>
-                  <Search size={14} color="#9ca3af" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-                  <input
-                    ref={searchRef}
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    placeholder="Search people…"
-                    style={{
-                      width: "100%", height: 36, paddingLeft: 32, paddingRight: 12,
-                      border: "1.5px solid #f3f4f6", borderRadius: 22,
-                      fontSize: 13, outline: "none", fontFamily: "Poppins, sans-serif",
-                      background: "#f9fafb", color: "#111827",
-                      transition: "border-color 0.2s",
-                    }}
-                    onFocus={e => e.target.style.borderColor = "#89253E"}
-                    onBlur={e => e.target.style.borderColor = "#f3f4f6"}
-                  />
-                  {search && (
-                    <button onClick={() => setSearch("")} style={{
-                      position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                      background: "none", border: "none", cursor: "pointer", color: "#9ca3af",
-                      display: "flex", alignItems: "center",
-                    }}>
-                      <X size={13} />
-                    </button>
-                  )}
+        <div className={`mp-shell${minimized ? " is-hidden" : ""}`}>
+          <aside className={`mp-sidebar${selectedUser ? " has-chat" : ""}`}>
+            <div className="mp-side-head">
+              <div className="mp-side-title">
+                <div className="mp-side-title-icon">
+                  <MessageSquare size={16} strokeWidth={2.2} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="mp-side-title-text">Messages</div>
+                  <div className="mp-side-title-sub">
+                    {onlineContacts.length > 0
+                      ? `${onlineContacts.length} online now`
+                      : "Trevio chat"}
+                  </div>
                 </div>
               </div>
-
-              {/* Online users strip */}
-              {!search && onlineUsers.filter(id => id !== (user?._id || user?.id)).length > 0 && (
-                <div style={{ padding: "8px 12px 4px" }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: 8 }}>
-                    Online
-                  </div>
-                  <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
-                    {users.filter(u => onlineUsers.includes(u._id)).map(u => (
-                      <button key={u._id} onClick={() => setSelectedUser(u)} style={{
-                        background: "none", border: "none", cursor: "pointer",
-                        display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0,
-                      }}>
-                        <Avatar user={u} size={38} showOnline isOnline />
-                        <span style={{ fontSize: 10, color: "#374151", fontFamily: "Poppins, sans-serif", maxWidth: 44, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {u.firstName}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* All contacts label */}
-              <div style={{ padding: "6px 14px 4px", fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.6px" }}>
-                {search ? "Results" : "All Messages"}
-              </div>
-
-              {/* User list */}
-              <div style={{ flex: 1, overflowY: "auto" }}>
-                {filtered.length === 0 ? (
-                  <div style={{ padding: "30px 20px", textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-                    No users found
-                  </div>
-                ) : filtered.map(u => {
-                  const isOnline = onlineUsers.includes(u._id);
-                  const isActive = selectedUser?._id === u._id;
-                  return (
-                    <div
-                      key={u._id}
-                      className={`mp-user-row${isActive ? " active-row" : ""}`}
-                      onClick={() => setSelectedUser(u)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 10,
-                        padding: "8px 12px", cursor: "pointer",
-                        background: isActive ? "rgba(137,37,62,0.09)" : "none",
-                        borderLeft: isActive ? "3px solid #89253E" : "3px solid transparent",
-                        transition: "background 0.15s",
-                      }}
-                    >
-                      <Avatar user={u} size={42} showOnline isOnline={isOnline} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {u.firstName} {u.lastName}
-                        </div>
-                        {u.lastMessage && (
-                          <div style={{ fontSize: 12, color: "#9ca3af", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {u.lastMessage}
-                          </div>
-                        )}
-                      </div>
-                      {isOnline && (
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
-                      )}
-                    </div>
-                  );
-                })}
+              <div className="mp-head-actions">
+                <button
+                  className="mp-head-btn"
+                  onClick={() => setMinimized(true)}
+                  title="Minimize"
+                  aria-label="Minimize messages"
+                >
+                  <Minus size={14} />
+                </button>
+                <button
+                  className="mp-head-btn"
+                  onClick={onClose}
+                  title="Close"
+                  aria-label="Close messages"
+                >
+                  <X size={14} />
+                </button>
               </div>
             </div>
 
-            {/* Chat panel */}
-            {selectedUser && (
-              <div className="mp-chat-panel" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <Chat
-                  inlineUserId={selectedUser._id}
-                  inlineChatUser={selectedUser}
-                  onBack={() => setSelectedUser(null)}
-                  popupMode={true}
+            <div className="mp-search-wrap">
+              <div className="mp-search">
+                <Search size={14} className="mp-search-icon" />
+                <input
+                  ref={searchRef}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search conversations…"
+                  className="mp-search-input"
+                  aria-label="Search conversations"
                 />
+                {search && (
+                  <button
+                    className="mp-search-clear"
+                    onClick={() => setSearch("")}
+                    aria-label="Clear search"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!search && onlineContacts.length > 0 && (
+              <div className="mp-online-strip">
+                <div className="mp-section-label">
+                  <span>Online now</span>
+                  <span className="mp-count-pill">{onlineContacts.length}</span>
+                </div>
+                <div className="mp-online-scroll">
+                  {onlineContacts.map((u) => (
+                    <button
+                      key={u._id}
+                      className="mp-online-person"
+                      onClick={() => setSelectedUser(u)}
+                      title={`Message ${u.firstName}`}
+                    >
+                      <Avatar user={u} size={44} showOnline isOnline />
+                      <span className="mp-online-name">{u.firstName}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
-          </div>
-        )}
+
+            <div className="mp-list-label">
+              <span>{search ? "Results" : "All messages"}</span>
+              <span>{filtered.length}</span>
+            </div>
+
+            <div className="mp-list">
+              {filtered.length === 0 ? (
+                <div className="mp-empty">
+                  <div className="mp-empty-icon">
+                    {search ? <Search size={20} /> : <MessageSquare size={20} />}
+                  </div>
+                  <div className="mp-empty-title">
+                    {search ? "No conversations found" : "No messages yet"}
+                  </div>
+                  <div className="mp-empty-text">
+                    {search
+                      ? "Try a different name."
+                      : "Start a conversation with someone from your feed."}
+                  </div>
+                </div>
+              ) : (
+                filtered.map((u) => {
+                  const isOnline = onlineUsers.includes(u._id);
+                  const isActive = selectedUser?._id === u._id;
+                  const hasConversation = Boolean(u.lastMessageTime);
+                  const preview =
+                    u.lastMessage && u.lastMessage !== "No message available"
+                      ? u.lastMessage
+                      : hasConversation
+                        ? "Sent an attachment"
+                        : "No messages yet";
+
+                  return (
+                    <div
+                      key={u._id}
+                      className={`mp-row${isActive ? " active" : ""}`}
+                      onClick={() => setSelectedUser(u)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedUser(u);
+                        }
+                      }}
+                    >
+                      <Avatar user={u} size={44} showOnline isOnline={isOnline} />
+                      <div className="mp-row-main">
+                        <div className="mp-row-top">
+                          <span className="mp-row-name">
+                            {u.firstName} {u.lastName}
+                          </span>
+                          {u.lastMessageTime && (
+                            <span className="mp-row-time">
+                              {formatListTime(u.lastMessageTime)}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className={`mp-row-preview${
+                            hasConversation ? "" : " empty"
+                          }`}
+                        >
+                          {hasConversation && u.lastMessageIsYours && (
+                            <span className="you">You: </span>
+                          )}
+                          {preview}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+
+          {selectedUser && (
+            <section className="mp-chat-pane">
+              <Chat
+                inlineUserId={selectedUser._id}
+                inlineChatUser={selectedUser}
+                onBack={handleBackToInbox}
+                popupMode
+                onClose={onClose}
+              />
+            </section>
+          )}
+        </div>
       </div>
     </>
   );
